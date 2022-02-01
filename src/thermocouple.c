@@ -14,13 +14,14 @@
 #include "spicmds.h" // spidev_transfer
 
 enum {
-    TS_CHIP_MAX31855, TS_CHIP_MAX31856, TS_CHIP_MAX31865, TS_CHIP_MAX6675
+    TS_CHIP_MAX31855, TS_CHIP_MAX31856, TS_CHIP_MAX31865, TS_CHIP_MAX6675, TS_CHIP_ADS1118
 };
 
 DECL_ENUMERATION("thermocouple_type", "MAX31855", TS_CHIP_MAX31855);
 DECL_ENUMERATION("thermocouple_type", "MAX31856", TS_CHIP_MAX31856);
 DECL_ENUMERATION("thermocouple_type", "MAX31865", TS_CHIP_MAX31865);
 DECL_ENUMERATION("thermocouple_type", "MAX6675", TS_CHIP_MAX6675);
+DECL_ENUMERATION("thermocouple_type", "ADS1118", TS_CHIP_ADS1118);
 
 struct thermocouple_spi {
     struct timer timer;
@@ -51,7 +52,7 @@ void
 command_config_thermocouple(uint32_t *args)
 {
     uint8_t chip_type = args[2];
-    if (chip_type > TS_CHIP_MAX6675)
+    if (chip_type > TS_CHIP_ADS1118)
         shutdown("Invalid thermocouple chip type");
     struct thermocouple_spi *spi = oid_alloc(
         args[0], command_config_thermocouple, sizeof(*spi));
@@ -163,6 +164,65 @@ thermocouple_handle_max6675(struct thermocouple_spi *spi
         try_shutdown("Thermocouple reader fault");
 }
 
+static void
+thermocouple_handle_ads1118(struct thermocouple_spi *spi
+                            , uint32_t next_begin_time, uint8_t oid)
+{
+    static uint8_t read_fsm = 0;
+    //static int read_fsm = 0;
+    static uint16_t raw_it = 0, raw_ch = 0;
+    //static int raw_it = 0, raw_ch = 0;
+
+    uint8_t msg[2];
+
+    switch( read_fsm )
+    {
+        default:
+            read_fsm = 0;
+        case 0:
+            msg[0] = 0x81; msg[1] = 0x73; //0x8173 => 1000 0001 0111 0011 //FST 0.256V, DR 64SPS
+            spidev_transfer(spi->spi, 0, sizeof(msg), msg);
+
+            read_fsm += 1;
+            break;
+        case 1: //request internal tempeture
+            msg[0] = 0x8d; msg[1] = 0x63; //0x8d63 => 1000 1101 0110 0011 //FST 0.256V, DR 64SPS
+            spidev_transfer(spi->spi, 1, sizeof(msg), msg);
+
+            raw_it = (uint16_t) (( msg[0] << 8 ) | (msg[1] ));
+            thermocouple_respond(spi, next_begin_time, ((raw_ch<<16)|raw_it), 0, oid);
+            
+            read_fsm += 1;
+            break;
+        case 2:
+        case 3:
+        case 4:
+        case 5: //save internal tempeture, request chan1 ADC
+            msg[0] = 0x8d; msg[1] = 0x63;
+            spidev_transfer(spi->spi, 1, sizeof(msg), msg);
+            raw_ch = (uint16_t) (( msg[0] << 8 ) | (msg[1] ));
+            if ( raw_ch >= 0xFFF0 )
+            {
+                raw_ch = 0;
+            }
+            thermocouple_respond(spi, next_begin_time, ((raw_ch<<16)|raw_it), 0, oid);
+            read_fsm += 1;
+            break;
+        case 6: //save chan1 ADC, request internal tempeture
+            msg[0] = 0x81; msg[1] = 0x73;
+            spidev_transfer(spi->spi, 1, sizeof(msg), msg);
+            raw_ch = (uint16_t) (( msg[0] << 8 ) | (msg[1] ));
+            if ( raw_ch >= 0xFFF0 )
+            {
+                raw_ch = 0;
+            }
+            thermocouple_respond(spi, next_begin_time, ((raw_ch<<16)|raw_it), 0, oid);
+
+            read_fsm = 1;
+            break;
+    }
+}
+
 // task to read thermocouple and send response
 void
 thermocouple_task(void)
@@ -190,6 +250,9 @@ thermocouple_task(void)
             break;
         case TS_CHIP_MAX6675:
             thermocouple_handle_max6675(spi, next_begin_time, oid);
+            break;
+        case TS_CHIP_ADS1118:
+            thermocouple_handle_ads1118(spi, next_begin_time, oid);
             break;
         }
     }
