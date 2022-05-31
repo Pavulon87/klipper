@@ -43,6 +43,13 @@ CPPFLAGS = -I$(OUT) -P -MD -MT $@
 # Default targets
 target-y := $(OUT)klipper.elf
 
+# Build the additional hex output file
+target-y += $(OUT)klipper.elf.hex
+
+$(OUT)klipper.elf.hex: $(OUT)klipper.elf
+       @echo "  Creating hex file $@"
+       $(Q)$(OBJCOPY) -j .text -j .data -O ihex $< $@
+
 all:
 
 # Run with "make V=1" to see the actual compile commands
