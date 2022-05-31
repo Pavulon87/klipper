@@ -47,8 +47,8 @@ target-y := $(OUT)klipper.elf
 target-y += $(OUT)klipper.elf.hex
 
 $(OUT)klipper.elf.hex: $(OUT)klipper.elf
-       @echo "  Creating hex file $@"
-       $(Q)$(OBJCOPY) -j .text -j .data -O ihex $< $@
+	@echo "  Creating hex file $@"
+	$(Q)$(OBJCOPY) -j .text -j .data -O ihex $< $@
 
 all:
 
