@@ -5,9 +5,11 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
 import logging
+import re
 
 HOST_REPORT_TIME = 1.0
 RPI_PROC_TEMP_FILE = "/sys/class/thermal/thermal_zone0/temp"
+
 
 class Temperature_HOST:
     def __init__(self, config):
@@ -17,20 +19,26 @@ class Temperature_HOST:
         self.path = config.get("sensor_path", RPI_PROC_TEMP_FILE)
 
         self.temp = self.min_temp = self.max_temp = 0.0
+        self.humidity = self.min_humidity = self.max_humidity = 0.0
 
         self.printer.add_object("temperature_host " + self.name, self)
-        if self.printer.get_start_args().get('debugoutput') is not None:
+        if self.printer.get_start_args().get("debugoutput") is not None:
             return
-        self.sample_timer = self.reactor.register_timer(
-            self._sample_pi_temperature)
+        self.sample_timer = self.reactor.register_timer(self._sample_pi_temperature)
         try:
             self.file_handle = open(self.path, "r")
         except:
-            raise config.error("Unable to open temperature file '%s'"
-                               % (self.path,))
+            raise config.error("Unable to open temperature file '%s'" % (self.path,))
 
-        self.printer.register_event_handler("klippy:connect",
-                                            self.handle_connect)
+        try:
+            self.file_handle2 = open(self.path.replace("temp", "humid"), "r")
+        except:
+            raise config.error(
+                "Unable to open humidity file '%s'"
+                % (self.path.replace("temp", "humid"),)
+            )
+
+        self.printer.register_event_handler("klippy:connect", self.handle_connect)
 
     def handle_connect(self):
         self.reactor.update_timer(self.sample_timer, self.reactor.NOW)
@@ -48,29 +56,56 @@ class Temperature_HOST:
     def _sample_pi_temperature(self, eventtime):
         try:
             self.file_handle.seek(0)
-            self.temp = float(self.file_handle.read())/1000.0
+            tt = self.file_handle.read()
+            tt2 = re.sub("[^0-9\.\-]", "", tt)
+            if len(tt2) > 0:
+                self.temp = float(tt2) / 1000.0
         except Exception:
-            logging.exception("temperature_host: Error reading data")
+            logging.exception(
+                "temperature_host: Error reading temp data >{}|{}<".format(tt, tt2)
+            )
             self.temp = 0.0
+            return self.reactor.NEVER
+
+        try:
+            self.file_handle2.seek(0)
+            th = self.file_handle2.read()
+            th2 = re.sub("[^0-9\.\-]", "", th)
+            if len(th2) > 0:
+                self.humidity = float(th2) / 1000.0
+        except Exception:
+            logging.exception(
+                "temperature_host: Error reading humidity data >{}|{}<".format(th, th2)
+            )
+            self.humidity = 0.0
             return self.reactor.NEVER
 
         if self.temp < self.min_temp:
             self.printer.invoke_shutdown(
                 "HOST temperature %0.1f below minimum temperature of %0.1f."
-                % (self.temp, self.min_temp,))
+                % (
+                    self.temp,
+                    self.min_temp,
+                )
+            )
         if self.temp > self.max_temp:
             self.printer.invoke_shutdown(
                 "HOST temperature %0.1f above maximum temperature of %0.1f."
-                % (self.temp, self.max_temp,))
+                % (
+                    self.temp,
+                    self.max_temp,
+                )
+            )
 
-        mcu = self.printer.lookup_object('mcu')
+        mcu = self.printer.lookup_object("mcu")
         measured_time = self.reactor.monotonic()
         self._callback(mcu.estimated_print_time(measured_time), self.temp)
         return measured_time + HOST_REPORT_TIME
 
     def get_status(self, eventtime):
         return {
-            'temperature': round(self.temp, 2),
+            "temperature": round(self.temp, 2),
+            "humidity": round(self.humidity, 2),
         }
 
 
