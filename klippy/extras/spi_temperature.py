@@ -388,7 +388,7 @@ class ADS1118(SensorBase):
         C = DEGREES[idx-1] + ((uV - UVOLTS[idx-1]) * (DEGREES[idx]-DEGREES[idx-1]) / (UVOLTS[idx]-UVOLTS[idx-1]));
         return C
         
-    def calc_temp(self, adc, fault):
+    def calc_temp(self, adc):
         ch = ( adc & 0xFFFF0000 ) >> 16
         it = ( adc & 0x0000FFFF )
 
